@@ -1,0 +1,16 @@
+{
+  "name": "jev-harness",
+  "version": "0.1.0",
+  "description": "TypeSafe jev で応答の官僚主義の兆候を検出し、形式的な完了を Stop hook で差し戻す。アウトカム確認前の書き込みも止める",
+  "author": { "name": "maito1201" },
+  "repository": "https://github.com/maito1201/jev-harness",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "jev-harness",
+    "shortDescription": "jev で形式的な完了を差し戻す",
+    "developerName": "maito1201",
+    "category": "Productivity",
+    "capabilities": ["Lifecycle hooks"]
+  }
+}

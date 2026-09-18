@@ -1,0 +1,14 @@
+{
+  "name": "jev-harness",
+  "owner": { "name": "maito1201" },
+  "metadata": { "description": "TypeSafe jev（約100ms・1回1円未満）で、エージェントの応答から官僚主義の兆候を検出し、形式的な完了を Stop hook で差し戻す plugin" },
+  "plugins": [
+    {
+      "name": "jev-harness",
+      "description": "依頼文と最後の応答を jev に渡し、言い換えアウトカム・仮定で進行・検証なしの完了宣言・黙った範囲縮小・頼まれていない変更を Yes/No で判定。兆候があれば Stop を差し戻し（同ターン2回まで）、アウトカム確認前の書き込みも止める。TYPESAFE_API_KEY が必要",
+      "source": "./",
+      "skills": ["./skills/jev-harness"],
+      "category": "Productivity"
+    }
+  ]
+}
