@@ -1,10 +1,19 @@
 {
   "name": "jev-harness",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
+  "main": ".opencode/plugins/jev-harness.mjs",
   "scripts": {
     "test": "node --test \"test/*.test.js\"",
     "eval": "node eval/run.mjs"
-  }
+  },
+  "opencode": {
+    "plugin": ".opencode/plugins/jev-harness.mjs"
+  },
+  "files": [
+    ".opencode/plugins/jev-harness.mjs",
+    "hooks/",
+    "bin/",
+    "skills/"
+  ]
 }

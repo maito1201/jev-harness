@@ -34,9 +34,17 @@ hook の差し戻しは2回まで。難しい仕事では、見せる前に自�
 ## インストール
 
 ```bash
+# Claude Code
 claude plugin marketplace add maito1201/jev-harness && claude plugin install jev-harness@jev-harness
+# Codex
 codex plugin marketplace add maito1201/jev-harness && codex plugin add jev-harness@jev-harness   # Codex は /hooks で信頼が要る
+# opencode
+cp -r .opencode ~/.config/opencode/  # グローバル
+# またはプロジェクトごと:
+cp -r .opencode <your-project>/
 ```
+
+opencode では `.opencode/plugins/jev-harness.mjs` が自動で読み込まれます。`TYPESAFE_API_KEY` 環境変数を設定してください。
 
 API キーは環境変数 `TYPESAFE_API_KEY`。1Password なら `export TYPESAFE_API_KEY=$(op read "op://<vault>/<item>/credential")`。キーが無い・API 断のときは判定せず警告だけ（fail-open）。
 止める: `JEV_HARNESS=off`。記録だけ止める: `JEV_HARNESS_LOG=off`。
