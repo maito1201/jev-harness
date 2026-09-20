@@ -1,0 +1,24 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "jev-harness",
+  "version": "0.1.0",
+  "description": "JEV reviews outcome alignment, implementation value, scope, and completion evidence at Codex lifecycle gates.",
+  "author": {
+    "name": "maito1201"
+  },
+  "repository": "https://github.com/maito1201/jev-harness",
+  "extensions": {
+    "com.openai": {
+      "hooks": "./hooks/hooks.json",
+      "interface": {
+        "displayName": "jev-harness",
+        "shortDescription": "JEV reviews plans before implementation and rejects unsupported completion claims",
+        "longDescription": "JEV reviews the intended outcome, implementation value, scope, and observed completion evidence at separate Codex lifecycle gates.",
+        "developerName": "maito1201",
+        "category": "Productivity",
+        "capabilities": ["Lifecycle hooks"],
+        "defaultPrompt": ["Use JEV lifecycle gates to take this development task from outcome agreement through implementation and outcome verification."]
+      }
+    }
+  }
+}

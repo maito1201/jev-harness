@@ -36,14 +36,23 @@ export const PROMPT_QUESTIONS = {
       false: { what: "The request is concrete and small, or the purpose and acceptance are already explicit; asking first would only delay." },
     },
   },
+  needs_plan_review: {
+    type: "noul",
+    instructions: "Before implementation of `prompt`, should the coding agent present a concrete plan and have its value and success checks reviewed?",
+    criteria: {
+      true: { what: "The request involves a feature, behavior change, design choice, multiple files or systems, or enough work that implementing a weak approach would waste meaningful effort." },
+      false: { what: "The request is a tiny mechanical edit with an unambiguous source of truth, or asks only for explanation or investigation without implementation." },
+    },
+  },
 };
+export const NEEDS_PLAN_REVIEW = 0.60;
 
 // ── PreToolUse（Write/Edit）: 書き込み先が依頼の範囲内か ─────────────
 // 実測: Sidebar 新規 0.80、依頼どおりのファイル 0.10。削除はパスから読めないので code が is_new/is_delete を明示する
 export const WRITE_QUESTIONS = {
   off_scope: {
     type: "noul",
-    instructions: "Is editing `file` (see `is_new`) outside what `request` and `agreed_outcome` ask for?",
+    instructions: "Does editing any entry in `files` (see each `is_new`) fall outside what `request` and `agreed_outcome` ask for?",
     criteria: {
       true: { what: "The file implements something not requested: a new component or feature, an unrelated area, a deleted feature, a style or refactor sweep." },
       false: { what: "Editing this file is a plausible part of doing exactly the request, including its tests, docs, and config." },
@@ -127,6 +136,22 @@ export const STOP_QUESTIONS = {
     type: "noul",
     instructions: "Does the plan in `report` address every part of `request` (and `agreed_outcome` if present), including every platform, case, or component named there?",
   },
+  plan_advances_outcome: {
+    type: "noul",
+    instructions: "Would executing this plan materially advance the user's stated outcome, rather than merely create the requested artifact or satisfy a proxy?",
+    criteria: {
+      true: { what: "The plan connects implementation choices to the person and change in the outcome, and explains why the work is worth doing." },
+      false: { what: "The plan mainly produces files, passes checks, or follows the literal request without showing how that changes the user's situation." },
+    },
+  },
+  plan_has_outcome_check: {
+    type: "noul",
+    instructions: "Does the plan include an observable check that could show whether the user's outcome was achieved, including a failure or rejection case?",
+    criteria: {
+      true: { what: "Names a concrete behavior or observation tied to the outcome and includes how an inadequate result is detected." },
+      false: { what: "Checks only compilation, tests, file existence, counts, or vague manual review without an outcome-level observation." },
+    },
+  },
   cases_incomplete: {
     type: "noul",
     instructions: "Does `report` enumerate cases, platforms, or branches that do not cover everything `request` requires (a named case is missing)?",
@@ -136,16 +161,24 @@ export const STOP_QUESTIONS = {
     instructions: "Does `report` claim success on a proxy (tests pass, files exist, numbers match) while `agreed_outcome`'s own terms (who, what changes for them) are not addressed or are replaced?",
     criteria: { true: { what: "Success is redefined to the proxy; the outcome's subject is not mentioned." }, false: { what: "Reports on the outcome's own terms, or explicitly says the outcome is not yet verified; or agreed_outcome is null." } },
   },
+  outcome_evidence: {
+    type: "noul",
+    instructions: "Does a completion report provide observed evidence that the agreed outcome occurred, or explicitly say it remains unverified instead of claiming completion?",
+    criteria: {
+      true: { what: "Reports a real behavior observed in the user's intended environment, including a rejection/failure path where relevant; or clearly says the outcome is not yet verified and does not claim completion." },
+      false: { what: "Claims completion using only implementation existence, unit tests, lint, counts, or the judge's own score, without observing the outcome behavior." },
+    },
+  },
 };
 
-export const PRESENCE = new Set(["conclusion_first", "restates_request_faithfully", "verification_matches_facts", "plan_covers_request"]);
+export const PRESENCE = new Set(["conclusion_first", "restates_request_faithfully", "verification_matches_facts", "plan_covers_request", "plan_advances_outcome", "plan_has_outcome_check", "outcome_evidence"]);
 
 // 種類ごとに見る問い。block: 差し戻し、warn: 注意。needsOutcome: agreed_outcome がある時だけ
 export const POLICY = {
   proposal:   { block: ["outcome_paraphrase", "assumed_instead_of_asking"], warn: [] },
-  plan:       { block: ["plan_covers_request", "handwave", "cases_incomplete", "assumed_instead_of_asking"], warn: ["restates_request_faithfully"] },
+  plan:       { block: ["plan_covers_request", "plan_advances_outcome", "plan_has_outcome_check", "handwave", "cases_incomplete", "assumed_instead_of_asking"], warn: ["restates_request_faithfully"] },
   progress:   { block: ["assumed_instead_of_asking", "remaining_work_while_done"], warn: ["conclusion_first", "process_narrative", "files_out_of_scope"] },
-  completion: { block: ["conclusion_first", "remaining_work_while_done", "files_out_of_scope", "assumed_instead_of_asking", "restates_request_faithfully"], warn: ["process_narrative", "handwave", "cases_incomplete"], needsOutcome: ["outcome_drift"] }, // cases_incomplete は場合分けの無い完了報告にも 0.6〜0.75 で点く（実測）ので注意まで
+  completion: { block: ["conclusion_first", "remaining_work_while_done", "files_out_of_scope", "assumed_instead_of_asking", "restates_request_faithfully"], warn: ["process_narrative", "handwave", "cases_incomplete"], needsOutcome: ["outcome_drift", "outcome_evidence"] }, // cases_incomplete は場合分けの無い完了報告にも 0.6〜0.75 で点く（実測）ので注意まで
   answer:     { block: [], warn: [] },
   other:      { block: [], warn: [] },
 };
@@ -163,6 +196,9 @@ export const FIX = {
   files_out_of_scope: "依頼の範囲外のファイルを書いている。戻すか、必要な理由を書いて承認を待つ",
   handwave: "必要な一歩を「適宜」「はず」「明らかに」で飛ばしている。どうやるかを書く",
   plan_covers_request: "計画が依頼の一部（名指しされた対象・ケース・プラットフォーム）に触れていない。網羅するか、外す理由を書く",
+  plan_advances_outcome: "実装しても合意アウトカムを前進させる根拠がない。成果物ではなく、誰の何がどう変わるかへの因果を示す",
+  plan_has_outcome_check: "計画にアウトカムを観測する検収と失敗例がない。代理指標だけでなく、実環境で何を見て合否を決めるかを書く",
   cases_incomplete: "場合分けが依頼の要求を網羅していない。欠けたケースを足す",
   outcome_drift: "合意したアウトカムでなく代理指標（テスト・件数）で成功を言っている。アウトカムの語で何が確認できたかを書く",
+  outcome_evidence: "合意アウトカムが実現した観測証拠がない。実環境の成功・差し戻し動作を示すか、未検証として完了宣言を取り下げる",
 };

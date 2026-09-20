@@ -6,7 +6,7 @@ description: 難しい仕事（方針が複数ある・証明や設計のよう�
 # jev-harness — 見せる前に自分で検査する
 
 hook は最後の応答を差し戻すが、直せるのは2回まで。難しい仕事では、書く前に自分で検査して回数を使わない。
-道具は `node "${CLAUDE_PLUGIN_ROOT}/bin/jev-check.mjs" <mode>`。stdin に JSON、stdout に JSON、1回 0.2〜0.7 秒。
+道具は `node "${PLUGIN_ROOT}/bin/jev-check.mjs" <mode>`。stdin に JSON、stdout に JSON、1回 0.2〜0.7 秒。
 
 ## いつ使うか
 

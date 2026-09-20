@@ -5,12 +5,13 @@
   "author": { "name": "maito1201" },
   "repository": "https://github.com/maito1201/jev-harness",
   "skills": "./skills/",
-  "hooks": "./hooks/hooks.json",
   "interface": {
     "displayName": "jev-harness",
     "shortDescription": "jev で形式的な完了を差し戻す",
+    "longDescription": "JEV が開発タスクのアウトカム、実装前の計画価値、変更範囲、完了時の実証を段階ごとに審査し、不十分な処理を差し戻します。",
     "developerName": "maito1201",
     "category": "Productivity",
-    "capabilities": ["Lifecycle hooks"]
+    "capabilities": ["Lifecycle hooks"],
+    "defaultPrompt": ["JEV の段階別ゲートを使って、この開発タスクをアウトカムから検収まで進めてください。"]
   }
 }

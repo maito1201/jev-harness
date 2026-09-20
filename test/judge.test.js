@@ -40,6 +40,16 @@ test("plan: 網羅していない・手抜きは差し戻し", () => {
   assert.deepEqual(v.blocks.map((b) => b.id).sort(), ["handwave", "plan_covers_request"]);
 });
 
+test("plan: 実装価値とアウトカム検収が無ければ差し戻す", () => {
+  const v = verdict({ message_kind: kind("plan"), plan_covers_request: n(0.9), plan_advances_outcome: n(0.2), plan_has_outcome_check: n(0.1), handwave: n(0.1), cases_incomplete: n(0.1) });
+  assert.deepEqual(v.blocks.map((b) => b.id).sort(), ["plan_advances_outcome", "plan_has_outcome_check"]);
+});
+
+test("completion: 合意アウトカムの実証が無ければ差し戻す", () => {
+  const v = verdict({ message_kind: kind("completion"), conclusion_first: n(0.9), remaining_work_while_done: n(0.1), outcome_drift: n(0.1), outcome_evidence: n(0.2) }, { hasOutcome: true });
+  assert.deepEqual(v.blocks.map((b) => b.id), ["outcome_evidence"]);
+});
+
 test("未知の種類・欠けた答えは other / 無視", () => {
   assert.equal(verdict({ message_kind: kind("weird"), handwave: n(0.99) }).blocks.length, 0);
   assert.equal(verdict({}).kind, "other");

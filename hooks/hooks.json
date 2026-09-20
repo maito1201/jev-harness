@@ -2,18 +2,18 @@
   "description": "jev-harness: コードが事実（書いたファイル・走った検証と結果・合意したアウトカム）を集め、TypeSafe jev が応答との意味的な照合を 0.3 秒で行う。計画の穴・範囲外の変更・事実と食い違う完了宣言を、人間に見せる前に差し戻す",
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run.mjs\" UserPromptSubmit", "timeout": 15 } ] }
+      { "hooks": [ { "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/run.mjs\" UserPromptSubmit", "timeout": 15 } ] }
     ],
     "PreToolUse": [
       { "matcher": "Write|Edit|MultiEdit|NotebookEdit|apply_patch",
-        "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run.mjs\" PreToolUse", "timeout": 15 } ] }
+        "hooks": [ { "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/run.mjs\" PreToolUse", "timeout": 15 } ] }
     ],
     "PostToolUse": [
       { "matcher": "Write|Edit|MultiEdit|NotebookEdit|apply_patch|Bash|shell|exec_command",
-        "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run.mjs\" PostToolUse", "timeout": 15 } ] }
+        "hooks": [ { "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/run.mjs\" PostToolUse", "timeout": 15 } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/run.mjs\" Stop", "timeout": 20 } ] }
+      { "hooks": [ { "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/run.mjs\" Stop", "timeout": 20 } ] }
     ]
   }
 }

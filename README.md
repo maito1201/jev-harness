@@ -1,6 +1,6 @@
 # jev-harness
 
-エージェントが人間に見せる前に、計画の穴・範囲外の変更・事実と食い違う完了宣言を自分で直す仕組み。Claude Code / Codex で動く hook と、エージェントが自分で呼ぶ検査 CLI の2つ。
+エージェントが実装に入る前と人間へ完了を伝える前に、計画の価値・範囲外の変更・アウトカムを実証していない完了宣言を差し戻す仕組み。Claude Code / Codex で動く hook と、エージェントが自分で呼ぶ検査 CLI の2つ。
 判定は TypeSafe の System One モデル **jev**（1問 200〜600ms・入力 $0.042/M トークン）。コードが事実を集め、jev は意味の照合だけを担う。
 
 判定サブエージェント（LLM as a judge）は1回 42K〜128K トークン・1タスク 561K で実用にならなかった（autopoiesys 2026-09 の実測）。jev は1回 500〜2,500 トークンなので、書き込みごと・ターンごとに挟める。
@@ -9,11 +9,12 @@
 
 | いつ | コードが集める事実 | jev に聞くこと | 結果 |
 |---|---|---|---|
-| UserPromptSubmit | 依頼文 | 発話の種類 / 解釈が分かれる依頼か | 分かれる依頼（typo 直し 0.10、「見やすくして」0.77）だけ、作る前のアウトカム確認を要求 |
-| PreToolUse（Write/Edit） | 書き込み先・新規か | このファイルは依頼の範囲内か | 未確認なら拒否。範囲外に見える（≥0.8）なら人間に聞く |
+| UserPromptSubmit | 依頼文 | 発話の種類 / アウトカム確認と計画審査が必要か | 曖昧ならアウトカム確認、非自明な開発なら計画を要求 |
+| Stop（計画） | 依頼・合意アウトカム・計画 | 全範囲を扱うか / 実装する価値があるか / アウトカムを観測できるか | 不足なら差し戻し。合格した計画だけ実装ゲートを開く |
+| PreToolUse（Write/Edit/apply_patch） | 書き込み先・新規か | 計画審査済みか / 各ファイルが依頼の範囲内か | 未審査・範囲外なら Codex でも実行前に拒否 |
 | PostToolUse（Bash） | コマンドと出力の末尾 | 検証コマンドか / 成功したか | `facts.verification_runs` に記録 |
 | PostToolUse（Write/Edit） | 書いたファイル | — | `facts.files_written` に記録 |
-| Stop | 依頼・合意アウトカム・事実・最後の応答 | 下の14問 | 差し戻し（exit 2、同ターン2回まで）→ その後は人間へ |
+| Stop（完了） | 依頼・合意アウトカム・事実・最後の応答 | 完了主張が実行記録と合うか / 合意アウトカムを実環境で観測したか | 不足なら差し戻し（同ターン2回まで）→ その後は人間へ |
 
 Stop で見る問いは、作者が実務で受けた差し戻しの型（結論と成果物の場所が先頭に無い・制作過程を書く・依頼のすり替え・頼まれていない変更・仮定で進める・完了と言いつつ未了）と、数学の証明で分かれた穴の型（手抜き・網羅漏れ・循環）から選ぶ。実例の無い問いは入れない。
 「検証済み」の主張は jev に真偽を委ねず、記録された検証コマンドに成功したものが無ければコードが差し戻す。
@@ -36,13 +37,16 @@ hook の差し戻しは2回まで。難しい仕事では、見せる前に自�
 ```bash
 # Claude Code
 claude plugin marketplace add maito1201/jev-harness && claude plugin install jev-harness@jev-harness
-# Codex
-codex plugin marketplace add maito1201/jev-harness && codex plugin add jev-harness@jev-harness   # Codex は /hooks で信頼が要る
+# Codex CLI で marketplace を登録
+codex plugin marketplace add maito1201/jev-harness
+# その後、Codex デスクトップのプラグインディレクトリから jev-harness をインストール
 # opencode
 cp -r .opencode ~/.config/opencode/  # グローバル
 # またはプロジェクトごと:
 cp -r .opencode <your-project>/
 ```
+
+Codex はプラグインの有効化だけでは未管理 hook を実行しません。`hooks/hooks.json` の内容をレビューして信頼済みにし、新しいタスクで動作確認してください。
 
 opencode では `.opencode/plugins/jev-harness.mjs` が自動で読み込まれます。`TYPESAFE_API_KEY` 環境変数を設定してください。
 
@@ -60,6 +64,6 @@ TYPESAFE_API_KEY=… npm run eval   # eval/cases.json（差し戻しの実例16�
 
 ## できないこと
 
-- 証明やコードが「正しい」ことの判定。jev は文面の判定器で、算術（92,670² の検算の捏造は 0.34 で見抜けない）と多段推論はできない。数値はコードで再計算し、正しさはテスト・実行結果・人間が決める
+- 証明やコードが「正しい」ことの判定。jev は計画と報告の意味を照合する判定器で、算術（92,670² の検算の捏造は 0.34 で見抜けない）と多段推論はできない。数値はコードで再計算し、正しさはテスト・実行結果・人間が決める
 - サブエージェントの審査（SubagentStop に依頼文が渡らない）
 - 方針の重複検出は言い換え 0.98、部分的に重なる別方針 0.74 で分離が弱い

@@ -59,14 +59,14 @@ test("曖昧な依頼 → 確認を要求し書き込み拒否。返事の後は
   assert.equal(state(dir2).approved, true);
 });
 
-test("範囲外に見える書き込みは人間に聞く（ask）。PostToolUse で事実が溜まる", async () => {
+test("範囲外に見える書き込みは Codex でも確実に拒否。PostToolUse で事実が溜まる", async () => {
   const dir = tmp();
   nextAnswers = { prompt_kind: choice("new_request"), needs_outcome_check: n(0.1) };
   await run("UserPromptSubmit", { prompt: "売上カードの寸法を直して" }, {}, dir);
   nextAnswers = { off_scope: n(0.85) };
   let r = await run("PreToolUse", { tool_name: "Write", tool_input: { file_path: "/p/src/Sidebar.tsx" }, cwd: "/p" }, {}, dir);
-  assert.equal(r.out.hookSpecificOutput.permissionDecision, "ask"); assert.match(r.out.hookSpecificOutput.permissionDecisionReason, /src\/Sidebar\.tsx/);
-  assert.equal(requests.at(-1).state.is_new, true);
+  assert.equal(r.out.hookSpecificOutput.permissionDecision, "deny"); assert.match(r.out.hookSpecificOutput.permissionDecisionReason, /src\/Sidebar\.tsx/);
+  assert.equal(requests.at(-1).state.files[0].is_new, true);
   r = await run("PostToolUse", { tool_name: "Write", tool_input: { file_path: "/p/src/Sidebar.tsx" }, cwd: "/p" }, {}, dir);
   assert.deepEqual(state(dir).facts.files_written, [{ file: "src/Sidebar.tsx", is_new: true }]);
   nextAnswers = { is_verification: n(0.9), passed: n(0.97) };
@@ -75,6 +75,35 @@ test("範囲外に見える書き込みは人間に聞く（ask）。PostToolUse
   nextAnswers = { is_verification: n(0.05), passed: n(0.5) };
   await run("PostToolUse", { tool_name: "Bash", tool_input: { command: "ls" }, tool_response: "a b" }, {}, dir);
   assert.equal(state(dir).facts.verification_runs.length, 1, "検証でないコマンドは記録しない");
+});
+
+test("非自明な実装は、価値と検収を審査した計画が通るまで書けない", async () => {
+  const dir = tmp();
+  nextAnswers = { prompt_kind: choice("new_request"), needs_outcome_check: n(0.1), needs_plan_review: n(0.9) };
+  await run("UserPromptSubmit", { prompt: "認証フローを作り直して" }, {}, dir);
+  let r = await run("PreToolUse", { tool_name: "Write", tool_input: { file_path: "/p/auth.js" } }, {}, dir);
+  assert.equal(r.out.hookSpecificOutput.permissionDecision, "deny");
+  assert.match(r.out.hookSpecificOutput.permissionDecisionReason, /実装価値/);
+
+  nextAnswers = { message_kind: choice("plan"), plan_covers_request: n(0.95), plan_advances_outcome: n(0.95), plan_has_outcome_check: n(0.95), handwave: n(0.05), cases_incomplete: n(0.05), assumed_instead_of_asking: n(0.05) };
+  r = await run("Stop", { last_assistant_message: "計画: 利用者が再ログインできるようにし、成功と拒否経路を実環境で確認する。" }, {}, dir);
+  assert.equal(r.code, 0); assert.equal(state(dir).planPassed, true);
+  nextAnswers = { off_scope: n(0.1) };
+  r = await run("PreToolUse", { tool_name: "Write", tool_input: { file_path: "/p/auth.js" } }, {}, dir);
+  assert.equal(r.out, null);
+});
+
+test("Codex apply_patch の command から全ファイルを抽出して審査・記録する", async () => {
+  const dir = tmp();
+  nextAnswers = { prompt_kind: choice("new_request"), needs_outcome_check: n(0.1), needs_plan_review: n(0.1) };
+  await run("UserPromptSubmit", { prompt: "a.js と b.js を直して" }, {}, dir);
+  const command = "*** Begin Patch\n*** Update File: /p/a.js\n@@\n-x\n+y\n*** Add File: /p/b.js\n+z\n*** End Patch";
+  nextAnswers = { off_scope: n(0.1) };
+  let r = await run("PreToolUse", { tool_name: "apply_patch", tool_input: { command }, cwd: "/p" }, {}, dir);
+  assert.equal(r.out, null);
+  assert.deepEqual(requests.at(-1).state.files.map((x) => x.file), ["a.js", "b.js"]);
+  await run("PostToolUse", { tool_name: "apply_patch", tool_input: { command }, cwd: "/p" }, {}, dir);
+  assert.deepEqual(state(dir).facts.files_written.map((x) => x.file), ["a.js", "b.js"]);
 });
 
 test("Stop: 検証済みと言うが走っていない → 差し戻し（上限まで）。走っていれば通る", async () => {
