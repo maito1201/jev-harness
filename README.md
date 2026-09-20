@@ -47,7 +47,7 @@ cp -r .opencode <your-project>/
 ```
 
 Codex はプラグインの有効化だけでは未管理 hook を実行しません。`hooks/hooks.json` の内容をレビューして信頼済みにし、新しいタスクで動作確認してください。
-Codex 0.153 系では互換マニフェスト `.codex-plugin/plugin.json` の `hooks` 宣言が実際の検出経路になるため、ルート `plugin.json` と両方に同じ定義を指定しています。
+Codex デスクトップでは互換マニフェスト `.codex-plugin/plugin.json` の `hooks` 宣言を検出経路として使います。
 
 opencode では `.opencode/plugins/jev-harness.mjs` が自動で読み込まれます。`TYPESAFE_API_KEY` 環境変数を設定してください。
 
