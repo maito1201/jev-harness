@@ -1,6 +1,6 @@
 // Host adapters and evidence fingerprints. No model-generated boolean is a receipt.
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
-import { resolve, extname, join } from 'node:path';
+import { resolve, extname, join, dirname, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 
 export const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -58,6 +58,16 @@ export function sources(op, written=[]) {
     const content=readFileSync(p,'utf8');total+=content.length;
     if (total>140000) throw new Error('Source review too large; narrow implementation scope');
     result.push({path:p,sha256:hash(content),content});
+    // Include direct local dependencies and literal reference data, not just the
+    // launcher. Without the oracle a reviewer cannot assess what assertions mean.
+    if(paths.size>100)throw new Error('Too many source dependencies');
+    const dependencies=[];
+    for(const m of content.matchAll(/(?:from\s*|import\s*\()(['"])(\.[^'"]+)\1/g))dependencies.push(resolve(dirname(p),m[2]));
+    for(const m of content.matchAll(/readFileSync\s*\(\s*(['"])([^'"]+)\1/g))dependencies.push(resolve(op.cwd,m[2]));
+    for(const dependency of dependencies){
+      const rel=relative(op.cwd,dependency);
+      if(!rel.startsWith('..') && !/^[A-Za-z]:/.test(rel))paths.add(dependency);
+    }
   }
   return result;
 }

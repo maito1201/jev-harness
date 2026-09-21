@@ -1,0 +1,15 @@
+{
+  "initial": "design",
+  "phases": {
+    "design": {"role":"designer","allow":["read","evaluation_edit"],"on":{"plan_accepted":"premises"}},
+    "premises": {"role":"investigator","allow":["read","premise_check"],"on":{"premises_passed":"implementation"}},
+    "implementation": {"role":"implementer","allow":["read","implementation_edit","pilot_check"],"on":{"pilot_passed":"evaluation"}},
+    "evaluation": {"role":"evaluator","allow":["read","evaluation_check"],"on":{"evaluation_passed":"execution"}},
+    "execution": {"role":"executor","allow":["read","execute"],"on":{"execution_finished":"results"}},
+    "results": {"role":"reviewer","allow":["read","result_check"],"on":{"result_passed":"complete"}},
+    "complete": {"role":"reporter","allow":["read"],"on":{}},
+    "halted": {"role":"diagnostician","allow":["read"],"on":{}}
+  },
+  "failures":{"implementation":"implementation","evaluation":"design","premise":"premises","observation":"$current","unknown":"halted"},
+  "max_identical_failures":3
+}
