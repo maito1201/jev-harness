@@ -1,5 +1,7 @@
 # jev-harness
 
+**長い会話・受付復旧の修正:** command hook の現行仕様と制約は [REPAIR.md](REPAIR.md) を参照。APIエラーは合格にせず、未審査の入力を保存して再審査します。
+
 **Command hook更新:** 現行の実行前・完了前ゲートと検証範囲は [PHASE_GATES.md](PHASE_GATES.md) を参照。以下の旧説明にある「2回まで」「その後は通過」はcommand hookには適用されません。OpenCodeは旧実装のままです。
 
 エージェントが実装に入る前と人間へ完了を伝える前に、計画の価値・範囲外の変更・アウトカムを実証していない完了宣言を差し戻す仕組み。Claude Code / Codex で動く hook と、エージェントが自分で呼ぶ検査 CLI の2つ。

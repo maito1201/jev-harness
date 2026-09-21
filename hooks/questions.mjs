@@ -134,7 +134,7 @@ export const STOP_QUESTIONS = {
   },
   plan_covers_request: {
     type: "noul",
-    instructions: "Does the plan in `report` address every part of `request` (and `agreed_outcome` if present), including every platform, case, or component named there?",
+      instructions: "Does the plan in `report` address every part of `request` (and `agreed_outcome` if present), including every platform, case, or component named there?",
   },
   plan_advances_outcome: {
     type: "noul",

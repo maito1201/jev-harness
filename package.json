@@ -4,7 +4,7 @@
   "type": "module",
   "main": ".opencode/plugins/jev-harness.mjs",
   "scripts": {
-    "test": "node --test \"test/*.test.js\"",
+    "test": "node --test",
     "eval": "node eval/run.mjs"
   },
   "opencode": {

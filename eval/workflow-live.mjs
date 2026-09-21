@@ -29,7 +29,7 @@ try{
  ensure(saved().approved===true,'Concrete request not approved');
  const plan='Plan: The caller must receive true only for boolean true; false, null and string true must each return false. The implementation mechanism is strict identity value === true. First inspect tests/contract.json and run tests/premise.mjs to validate those four inputs and the expected [true,false,false,false], with a deliberately inconsistent reference rejected. During implementation inspect main.mjs and correct it to value === true only if necessary. Then tests/pilot.mjs must assert the exact four outputs from permit. Independently audit the evaluator using tests/evaluation.mjs: the correct function passes; always-true and always-false functions must fail, showing the test catches both unsafe acceptance and over-rejection. After these gates run tests/execute.mjs for exactly four inputs, and tests/result.mjs must compare the actual saved result.json against the unchanged expected array. Any assertion failure prevents completion. Scope is only this fixture and these inputs, not host integration or general safety. This is the plan; no checks have run yet.';
  const planResult=await hook('Stop',{last_assistant_message:plan});
- ensure(planResult.code===2 && planResult.stderr.includes('jev-workflow: phase=premises'),'Plan did not request automatic continuation');
+ ensure(planResult.stdout?.decision==='block' && planResult.stderr.includes('jev-workflow: phase=premises'),'Plan did not request automatic continuation');
  ensure(saved().workflow.phase==='premises','Plan did not advance');
  const originalRequest=saved().request;
  await hook('UserPromptSubmit',{prompt:planResult.stderr});
@@ -46,7 +46,7 @@ try{
   console.log(JSON.stringify({check:name,observed_phase:next}));
  }
  const completion=await hook('Stop',{last_assistant_message:'Verified this fixture for the four agreed inputs. The actual saved results are [true,false,false,false], matching the unchanged reference. The prerequisite check, pilot, independent evaluator fault checks, four-input execution, and result comparison all completed with exit zero. The scoped fixture verification is complete; this does not establish desktop host integration or behavior outside these inputs.'});
- ensure(completion.code===0,'Evidence-backed completion rejected: '+completion.stderr);
+ ensure(completion.code===0 && completion.stdout?.decision!=='block','Evidence-backed completion rejected: '+completion.stderr);
  // Criteria edits must revoke all success BEFORE the edit is permitted.
  const edit={tool_name:'Write',tool_use_id:'tamper',tool_input:{file_path:'tests/contract.json',content:'{"expected":[true,true,true,true]}'}};
  ensure(denied(await hook('PreToolUse',edit)),'Criteria tampering permitted');

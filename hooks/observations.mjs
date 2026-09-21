@@ -11,19 +11,23 @@ export function transcript(path, turnId) {
     if(record.type==='turn_context' || p.type==='task_started'){
       const next=p.turn_id;if(next && next!==turn){turn=next;report='';}if(turn===turnId)matched=true;
     }
-    const text=typeof p.content==='string'?p.content:(p.content || []).map(c=>c.text || '').join('\n');
-    if(p.role==='user')conversation.push({role:'user',text:text.slice(-6000)});
+    const text=typeof p.content==='string'?p.content:(Array.isArray(p.content)?p.content:[]).map(c=>c.text || '').join('\n');
+    // Codex injects environment/plugin inventory as a user-role message. Keep it
+    // as context, but never recover it as an authorized task. Tool-delivered
+    // delegation is likewise not promoted into user authorization.
+    const hostContext=/^(?:\s*<(recommended_plugins|environment_context)>[\s\S]*?<\/\1>\s*)+$/.test(text);
+    if(p.role==='user')conversation.push({role:hostContext?'context':'user',text,turn_id:turn});
     if(p.role==='assistant' && text){
-      conversation.push({role:'assistant',text:text.slice(-6000)});
+      conversation.push({role:'assistant',text,turn_id:turn});
       if((!turnId || turn===turnId) && (!p.phase || ['final','final_answer'].includes(p.phase)))report=text;
     }
-    if(['function_call','custom_tool_call'].includes(p.type))calls.set(p.call_id,{name:p.name,input:String(p.arguments ?? p.input ?? '').slice(0,6000)});
+    if(['function_call','custom_tool_call'].includes(p.type))calls.set(p.call_id,{name:p.name,input:String(p.arguments ?? p.input ?? '')});
     if(['function_call_output','custom_tool_call_output'].includes(p.type)){
       const output=typeof p.output==='string'?p.output:JSON.stringify(p.output ?? '');
-      observations.push({turn_id:turn,call_id:p.call_id,call:calls.get(p.call_id) || null,output:output.slice(-12000),output_hash:hash(output)});
+      observations.push({turn_id:turn,call_id:p.call_id,call:calls.get(p.call_id) || null,output,output_hash:hash(output)});
     }
   }
-  return {available:true,matched_turn:matched,observations:observations.slice(-12),conversation:conversation.slice(-12),report:matched?report:''};
+  return {available:true,matched_turn:matched,observations,conversation,report:matched?report:''};
 }
 
 export const RELIABILITY_QUESTIONS={
