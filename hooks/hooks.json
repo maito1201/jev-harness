@@ -5,15 +5,13 @@
       { "hooks": [ { "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/run.mjs\" UserPromptSubmit", "timeout": 15 } ] }
     ],
     "PreToolUse": [
-      { "matcher": "Write|Edit|MultiEdit|NotebookEdit|apply_patch",
-        "hooks": [ { "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/run.mjs\" PreToolUse", "timeout": 15 } ] }
+      { "hooks": [ { "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/run.mjs\" PreToolUse", "timeout": 60 } ] }
     ],
     "PostToolUse": [
-      { "matcher": "Write|Edit|MultiEdit|NotebookEdit|apply_patch|Bash|shell|exec_command",
-        "hooks": [ { "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/run.mjs\" PostToolUse", "timeout": 15 } ] }
+      { "hooks": [ { "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/run.mjs\" PostToolUse", "timeout": 60 } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/run.mjs\" Stop", "timeout": 20 } ] }
+      { "hooks": [ { "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/run.mjs\" Stop", "timeout": 60 } ] }
     ]
   }
 }

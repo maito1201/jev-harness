@@ -18,7 +18,7 @@ export const LIMITS = { request: 6000, laterEach: 1500, laterCount: 3, messageHe
 export const PROMPT_QUESTIONS = {
   prompt_kind: {
     type: "choice",
-    instructions: "Classify `prompt`, the latest message a user sent to a coding agent.",
+    instructions: "Classify prompt in context of previous_request, agreed_outcome and pending_proposal. Permission to apply the already discussed changes, including restating their destination, is go_ahead, not a new request. Preserve the existing task when the user says to proceed or approves applying the fix to the main project.",
     criteria: {
       new_request: { what: "Asks the agent to do, build, change, or investigate something. Includes a restated or expanded task.", not_for: "Replies to the agent's questions or approvals of a proposal", examples: ["このバグを直して", "jevでハーネスを作れないか考えている"] },
       go_ahead: { what: "Approves what the agent proposed or tells it to proceed, without adding new information.", examples: ["OK", "それで進めて", "直して良いです"] },
@@ -138,9 +138,9 @@ export const STOP_QUESTIONS = {
   },
   plan_advances_outcome: {
     type: "noul",
-    instructions: "Would executing this plan materially advance the user's stated outcome, rather than merely create the requested artifact or satisfy a proxy?",
+    instructions: "Does the plan describe a concrete mechanism that addresses the user's requested behavior? Assess the causal mechanism, not whether it repeats why the task is worthwhile. A plan is not required to have completed the work yet.",
     criteria: {
-      true: { what: "The plan connects implementation choices to the person and change in the outcome, and explains why the work is worth doing." },
+      true: { what: "The proposed behavior directly addresses the request; its intended effect follows from the mechanism. For a guard, checking evidence before execution and testing denial directly advances preventing unverified execution." },
       false: { what: "The plan mainly produces files, passes checks, or follows the literal request without showing how that changes the user's situation." },
     },
   },

@@ -1,11 +1,20 @@
 {
   "name": "jev-harness",
-  "interface": { "displayName": "jev-harness" },
+  "interface": {
+    "displayName": "jev-harness"
+  },
   "plugins": [
     {
       "name": "jev-harness",
-      "source": { "source": "url", "url": "https://github.com/maito1201/jev-harness.git", "ref": "master" },
-      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "source": {
+        "source": "url",
+        "url": "https://github.com/maito1201/jev-harness.git",
+        "ref": "main"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
       "category": "Productivity"
     }
   ]
