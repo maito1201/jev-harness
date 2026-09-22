@@ -13,6 +13,7 @@ hook は工程と証拠を管理する。差し戻し回数を使い切っても
 評価基準を変える場合は設計へ戻り、既存の合格を失効させる。実装失敗・評価不備・前提の反証を区別し、戻された工程から原因を直す。
 工程継続の差し戻しはユーザーの新しい要求ではない。元の要求と承認を保持する。
 審査不能や原因不明は完了扱いにしない。詳細と制約はプラグインルートの WORKFLOW.md を参照。
+審査障害時は `Read` または単独の `Get-Content -LiteralPath 'path'` で診断できる（外部審査不要）。`functions.exec` で包む場合は JSON 引数の `text(await tools.exec_command({"cmd":"Get-Content -LiteralPath 'path'"}));` だけにする。進展のない Stop 差し戻しは3回で未完了として終了し、変更・実行は許可されない。復旧はユーザーの修正指示を受けて再審査する。詳細は RECOVERY.md。
 道具は `node "${PLUGIN_ROOT}/bin/jev-check.mjs" <mode>`。stdin に JSON、stdout に JSON、1回 0.2〜0.7 秒。
 
 ## いつ使うか

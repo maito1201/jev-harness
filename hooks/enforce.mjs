@@ -6,6 +6,7 @@ import {ask} from './jev.mjs';
 import {boundedReview,ReviewError,uniqueEvidence,REVIEW_BYTES} from './review-budget.mjs';
 import {MODEL,PROMPT_QUESTIONS,STOP_QUESTIONS} from './questions.mjs';
 import {operation,footprint,sources,commandResult,hash} from './operations.mjs';
+import {diagnosticRead,MAX_STALLED_STOPS} from './recovery.mjs';
 import {ACTION_QUESTIONS,GATE_QUESTIONS,EVIDENCE_QUESTIONS,requireScores} from './stages.mjs';
 import {transcript,RELIABILITY_QUESTIONS,reliabilityFailures} from './observations.mjs';
 import {createWorkflow,transition,restart,failure,permitted,evaluationPath,evaluationSnapshot,classifyOperation,WORKFLOW_ACTION_QUESTIONS,FAILURE_QUESTIONS,POLICY,evidenceQuestions} from './workflow.mjs';
@@ -14,12 +15,23 @@ const stateDir=env.JEV_HARNESS_STATE_DIR || env.CLAUDE_PLUGIN_DATA || env.PLUGIN
 let input={},s={},sessionId='unknown',sessPath,lockPath,lockFd;
 const reviewDeadline=Date.now()+45000;
 let postInFlight=null;
+let advancedThisEvent=false;
 const HALTED='審査不能のため停止中です。完了とは扱っていません。';
 const out=v=>process.stdout.write(JSON.stringify(v)+'\n');
 const log=r=>appendFileSync(join(stateDir,'log.jsonl'),JSON.stringify({ts:new Date().toISOString(),session:sessionId,turn_id:input.turn_id || null,event,report_hash:s.report_hash || null,...r})+'\n');
 function save(){const p=sessPath+'.'+process.pid+'.tmp';writeFileSync(p,JSON.stringify(s));renameSync(p,sessPath);}
 function deny(reason){log({decision:'deny',reason,tool:input.tool_name});out({hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'deny',permissionDecisionReason:'jev-harness: '+reason}});}
-function block(reason){log({decision:'block',reason});const message='jev-harness: '+reason+'。回数で通過させません。審査不能なら「'+HALTED+'」と報告できます。';process.stderr.write(message+'\n');out({decision:'block',reason:message});}
+function terminalStop(reason){
+  s.recovery_required=true;s.completion_verified=false;s.last_stop_status='unverified';save();
+  const message='jev-harness: 自動再試行を終了しました。タスクは未完了・回答は未承認です。'+reason+'。診断用 Read または Get-Content -LiteralPath を使用できます。修正方針を伴うユーザー入力で再審査を開始します。';
+  log({decision:'terminated_unverified',reason});out({systemMessage:message});
+}
+function block(reason){
+  s.stalled_stops=advancedThisEvent?0:(s.stalled_stops || 0)+1;save();
+  if(s.stalled_stops>=MAX_STALLED_STOPS)return terminalStop(reason);
+  log({decision:'block',reason});const message='jev-harness: '+reason+'。回数で通過させません。審査不能なら「'+HALTED+'」と報告できます。';
+  s.last_block_message=message;save();process.stderr.write(message+'\n');out({decision:'block',reason:message});
+}
 async function judge(state,questions){
   if(env.JEV_HARNESS==='off')throw new Error('Harness disabled; protected operations are not authorized');
   s.review_cache ||= {};
@@ -46,10 +58,13 @@ function syncWorkflow(cwd){
  s.workflow ||= createWorkflow();
  if(s.workflow.seal && s.workflow.seal!==evaluationSnapshot(cwd).hash)invalidate('design','評価基準・評価コードが変更されたため既存合格を失効');
 }
-function advance(event){transition(s.workflow,event);s.workflow.continuation_needed=s.workflow.phase!=='complete';save();log({decision:'workflow_transition',phase:s.workflow.phase,trigger:event});}
+function advance(event){transition(s.workflow,event);advancedThisEvent=true;s.stalled_stops=0;s.workflow.continuation_needed=s.workflow.phase!=='complete';save();log({decision:'workflow_transition',phase:s.workflow.phase,trigger:event});}
 
 async function onPrompt(){
   const prompt=String(input.prompt || '');if(!prompt.trim())return;
+  if(s.last_block_message && prompt.trim()===s.last_block_message){
+    log({decision:'workflow_continuation',phase:s.workflow?.phase});return;
+  }
   if(s.continuation_notice && [s.continuation_notice,'jev-harness: '+s.continuation_notice+'。回数で通過させません。審査不能なら「'+HALTED+'」と報告できます。'].includes(prompt.trim())){
     log({decision:'workflow_continuation',phase:s.workflow?.phase});
     out({hookSpecificOutput:{hookEventName:'UserPromptSubmit',additionalContext:s.continuation_notice}});return;
@@ -60,6 +75,7 @@ async function onPrompt(){
   // Review them normally, chronologically, without editing the session by hand.
   recoverUserHistory(history,prompt);
   s.prompt_inbox.push({prompt,conversation:history.conversation,turn_id:input.turn_id || null});
+  s.stalled_stops=0;s.recovery_required=false;
   save(); // Durable BEFORE the network call. API failure must not erase the request.
   await drainPrompts();
   if(s.prompt_notice)out({hookSpecificOutput:{hookEventName:'UserPromptSubmit',additionalContext:s.prompt_notice}});
@@ -115,11 +131,18 @@ async function acceptPrompt(prompt,history){
 
 async function onPre(){
   const op=operation(input);
+  if(diagnosticRead(input)){
+    s.pending[op.id]={action:'read',operation:op};save();
+    log({decision:'allow',action:'read',tool:op.name,review:'local_diagnostic'});return;
+  }
+  if(s.recovery_required)return deny('自動再試行は終了済みです。診断用の読み取りとユーザーの修正指示を待っています。未審査の変更・実行は許可しません');
   syncWorkflow(op.cwd);
   recoverUserHistory(transcript(input.transcript_path,input.turn_id));
   const reviewedContext=hash(JSON.stringify(context()));
   const source=op.kind==='command'||op.kind==='modify'?sources(op,s.facts.files_written):[];
-  const a=await judge({operation:op,source,...context()},{...ACTION_QUESTIONS,...WORKFLOW_ACTION_QUESTIONS});
+  // Classify the operation's effects, not the entire history of the task.
+  // Authorization and requirement checks below still use the complete context.
+  const a=await judge({operation:op,source},{...ACTION_QUESTIONS,...WORKFLOW_ACTION_QUESTIONS});
   const action=op.kind==='modify'?'modify':a.action?.choice;
   if(!['read','modify','small_check','run'].includes(action))return deny('操作の副作用を判別できません');
   if(op.kind!=='modify' && typeof a.mixed_mutation_and_run?.noul!=='number')return deny('操作審査が欠落しています');
@@ -222,12 +245,13 @@ async function retryPost(){
 }
 
 async function onStop(){
-  syncWorkflow(resolve(input.cwd || process.cwd()));
+  if(s.recovery_required)return terminalStop('復旧待ち');
   const history=transcript(input.transcript_path,input.turn_id);
   const report=String(input.last_assistant_message || history.report || '');
   if(!report.trim())throw new Error('回答本文を取得できません。空の回答を審査済みとして通過させません');
   s.report_hash=hash(report);
   if(report.trim()===HALTED){log({decision:'halted_not_completed'});return;}
+  syncWorkflow(resolve(input.cwd || process.cwd()));
   recoverUserHistory(history);
   await drainPrompts();
   if(s.unreviewed_result)await retryPost();
@@ -268,6 +292,7 @@ async function onStop(){
     const bad=requireScores(a,['plan_covers_request','plan_advances_outcome','plan_has_outcome_check']);
       if(bad.length){save();return block('計画が要求・目的・検収を満たしません: '+bad.map(k=>`${k}=${a[k]?.noul} (必要: 0.8以上)`).join(', ')+'。依頼の全対象・禁止事項と各工程の確認方法を計画に対応付けてください。判定器は欠陥箇所を返していないため、具体的な欠落を確定したものではありません。修正した計画をStop審査へ提出してください');}
     s.plan={text:report,request_hash:requestHash()};s.planPassed=true;
+    if(s.workflow.phase==='halted')restart(s.workflow,'design','reviewed_recovery_plan');
     if(s.workflow.phase==='design'){
       s.workflow.seal=evaluationSnapshot(resolve(input.cwd || process.cwd())).hash;
       s.workflow.plan_hash=hash(report);advance('plan_accepted');
@@ -321,6 +346,9 @@ try{
     log({decision:'error',error_type:code,reason});
   }catch{}
   if(event==='PreToolUse')out({hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'deny',permissionDecisionReason:'jev-harness: '+reason}});
-  else if(event==='Stop'){process.stderr.write('jev-harness: '+reason+'。'+HALTED+'\n');out({decision:'block',reason:'jev-harness: '+reason+'。'+HALTED});}
+  else if(event==='Stop'){
+    if(sessPath && lockFd!==undefined)block(reason);
+    else out({systemMessage:'jev-harness: '+reason+'。未完了として自動再試行を終了します。'});
+  }
   else out({systemMessage:'jev-harness: '+reason+'。未審査の依頼/結果は保存済みで、変更・実行前に再審査します。'});
 }finally{if(lockFd!==undefined){closeSync(lockFd);unlinkSync(lockPath);}}

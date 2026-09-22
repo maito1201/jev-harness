@@ -7,6 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {operation,commandResult} from '../hooks/operations.mjs';
+import {diagnosticRead,MAX_STALLED_STOPS} from '../hooks/recovery.mjs';
 const RUN=fileURLToPath(new URL('../hooks/run.mjs',import.meta.url));
 const n=p=>({type:'noul',noul:p}),choice=c=>({type:'choice',choice:c,confidence:.99});
 let server,port,action='modify',checkKind='pilot',overrides={},seen=[],httpError=0,reviewRule=null;
@@ -38,8 +39,80 @@ async function ready(f){
  await check(f,'premise');action='modify';checkKind='pilot';
 }
 const command={tool_name:'Bash',tool_input:{command:'node main.js'},tool_use_id:'cmd'};
-const stopStatus=r=>r.code===0?(r.out?.decision==='block'?'block':'pass'):'error';
+const stopStatus=r=>r.code===0?(r.out?.decision==='block'?'block':r.out?.systemMessage?.includes('未完了')?'unverified':'pass'):'error';
 const denied=r=>r.out?.hookSpecificOutput?.permissionDecision==='deny';
+test('診断経路はAPI障害・巨大履歴・未審査の訂正から独立し、結果を保存する',async()=>{
+ const f=fixture();await ready(f);httpError=503;
+ await invoke(f,'UserPromptSubmit',{prompt:'訂正：main.jsは変更禁止'});
+ const before=seen.length;
+ const cmd={tool_name:'functions.exec',tool_input:{code:'text(await tools.exec_command({"cmd":"Get-Content -LiteralPath \'main.js\'"}));'},tool_use_id:'diagnose'};
+ assert.equal(denied(await invoke(f,'PreToolUse',cmd)),false);
+ await invoke(f,'PostToolUse',{...cmd,tool_response:{exit_code:0,output:'raw diagnosis'}});
+ assert.equal(seen.length,before);assert.equal(state(f).observations.at(-1).output,'raw diagnosis');
+ assert.equal(state(f).prompt_inbox.length,1);
+ assert.ok(denied(await invoke(f,'PreToolUse',{tool_name:'Write',tool_input:{file_path:'main.js',content:'bad'}})));
+});
+test('診断を装う実行・注入・別namespaceはローカル許可しない',()=>{
+ for(const cmd of ["Get-Content -LiteralPath 'main.js'; Remove-Item main.js","Get-Content -LiteralPath 'main.js' > out.txt","Get-Content -LiteralPath '$(evil)'","Get-Content -LiteralPath 'main.js' -Wait","node main.js"])
+   assert.equal(diagnosticRead({tool_name:'exec_command',tool_input:{cmd}}),false,cmd);
+ for(const code of ['await tools.exec_command({"cmd":"Get-Content -LiteralPath \'main.js\'"}); await tools.apply_patch("bad")','await tools.exec_command({cmd: "Get-Content -LiteralPath \'main.js\'"})'])
+   assert.equal(diagnosticRead({tool_name:'functions.exec',tool_input:{code}}),false);
+ assert.equal(diagnosticRead({tool_name:'attacker.Read',tool_input:{}}),false);
+ assert.equal(diagnosticRead({tool_name:'Read',tool_input:{file_path:'main.js'}}),true);
+});
+test('審査障害のStopループは有限で終了し、完了や実行許可へ変わらない',async()=>{
+ const f=fixture();await ready(f);httpError=503;
+ for(let i=0;i<MAX_STALLED_STOPS;i++){
+   const r=await invoke(f,'Stop',{last_assistant_message:'報告 '+i});
+   if(i<MAX_STALLED_STOPS-1)assert.equal(r.out.decision,'block');
+   else assert.match(r.out.systemMessage,/未完了・回答は未承認/);
+ }
+ const before=seen.length;
+ const r=await invoke(f,'Stop',{last_assistant_message:'全て成功しました'});
+ assert.equal(r.out.decision,undefined);assert.match(r.out.systemMessage,/未完了/);
+ assert.equal(state(f).completion_verified,false);assert.equal(state(f).workflow.phase,'implementation');
+ assert.ok(denied(await invoke(f,'PreToolUse',command)));
+ assert.equal(denied(await invoke(f,'PreToolUse',{tool_name:'Read',tool_input:{file_path:'main.js'}})),false);
+ assert.equal(seen.length,before);
+ httpError=0;overrides={prompt_kind:choice('go_ahead')};
+ await invoke(f,'UserPromptSubmit',{prompt:'続けて'});
+ assert.equal(state(f).recovery_required,false);assert.equal(state(f).stalled_stops,0);
+});
+test('文面を変えた内容不合格でもStopの上限をリセットしない',async()=>{
+ const f=fixture();await invoke(f,'UserPromptSubmit',{prompt:'ハーネスを修正'});
+ overrides={plan_covers_request:n(.1)};
+ for(let i=0;i<MAX_STALLED_STOPS;i++)await invoke(f,'Stop',{last_assistant_message:'計画 '+i});
+ assert.equal(state(f).recovery_required,true);assert.equal(state(f).planPassed,false);
+ assert.equal(state(f).workflow.phase,'design');
+});
+test('hostが差し戻しを入力へ戻しても新規要求や再試行上限のリセットにしない',async()=>{
+ const f=fixture();await invoke(f,'UserPromptSubmit',{prompt:'ハーネスを修正'});
+ const request=state(f).request;overrides={plan_covers_request:n(.1)};
+ const r=await invoke(f,'Stop',{last_assistant_message:'計画'});
+ const before=seen.length;
+ await invoke(f,'UserPromptSubmit',{prompt:r.out.reason});
+ assert.equal(seen.length,before);assert.equal(state(f).stalled_stops,1);
+ assert.equal(state(f).request,request);
+});
+test('巨大な要求でも診断と未達報告は審査APIも全体snapshotも要らない',async()=>{
+ const f=fixture();await ready(f);
+ const saved=state(f);saved.request='長い要求'.repeat(50000);
+ saved.facts.files_written=[{path:join(f.cwd,'too-large.js')}];
+ writeFileSync(join(f.cwd,'too-large.js'),'x'.repeat(2000001));
+ writeFileSync(join(f.state,'sessions/test.json'),JSON.stringify(saved));httpError=503;
+ const before=seen.length;
+ assert.equal(denied(await invoke(f,'PreToolUse',{tool_name:'exec_command',tool_input:{cmd:"Get-Content -LiteralPath 'main.js' -TotalCount 10"}})),false);
+ assert.equal(stopStatus(await invoke(f,'Stop',{last_assistant_message:'審査不能のため停止中です。完了とは扱っていません。'})),'pass');
+ assert.equal(seen.length,before);assert.equal(state(f).request,saved.request);
+});
+test('原因不明でhaltedになっても審査済みの復旧計画から前提検証へ戻れる',async()=>{
+ const f=fixture();await ready(f);action='small_check';checkKind='pilot';
+ await invoke(f,'PreToolUse',command);overrides={failure_kind:choice('unknown')};
+ await invoke(f,'PostToolUse',{...command,tool_response:{exit_code:1,output:'unknown failure'}});
+ assert.equal(state(f).workflow.phase,'halted');overrides={};
+ await invoke(f,'Stop',{last_assistant_message:'計画: 原因を調査し、前提、実装、小規模検証、独立評価、実行、結果を再検証する'});
+ assert.equal(state(f).workflow.phase,'premises');assert.equal(state(f).receipts.length,0);
+});
 test('計画不合格は点数・基準・正規の再提出手順を返す',async()=>{
  const f=fixture();await invoke(f,'UserPromptSubmit',{prompt:'隔離fixtureを検証してください'});
  overrides={plan_covers_request:n(.65)};
@@ -111,10 +184,11 @@ test('証拠審査へ未判定のfalseを観測事実として渡さない',asyn
  assert.equal('outcome_observed' in review.state.actual_process_result,false);
  assert.ok(review.state.source.length>0);
 });
-test('実行の成功だけを完了扱いせず、3回目・4回目も差し戻す',async()=>{
+test('実行の成功だけを完了扱いせず、上限では未承認として終了する',async()=>{
  const f=fixture();await ready(f);await evidence(f,{success:false});
  overrides={message_kind:choice('completion'),claims_completion:n(.95)};
- for(let i=0;i<4;i++)assert.equal(stopStatus(await invoke(f,'Stop',{last_assistant_message:'完了。テストは通りました。'})),'block');
+ for(let i=0;i<4;i++)assert.notEqual(stopStatus(await invoke(f,'Stop',{last_assistant_message:'完了。テストは通りました。'})),'pass');
+ assert.equal(state(f).completion_verified,false);assert.notEqual(state(f).workflow.phase,'complete');
 });
 test('answerと誤分類されても実装完了主張を証拠なしで通さない',async()=>{
  const f=fixture();await ready(f);overrides={message_kind:choice('answer'),claims_completion:n(.95)};
@@ -129,11 +203,12 @@ test('現在版の目的の実証があれば完了を許可し、正直な未�
  assert.equal(stopStatus(await invoke(f,'Stop',{last_assistant_message:'目的は未達。評価で否定されたため拡大しない。'})),'pass');
 });
 test('API断・欠落回答・キー無しは実行と完了を許可しない',async()=>{
- const f=fixture();await ready(f);
  for(const env of [{JEV_HARNESS_ENDPOINT:'http://127.0.0.1:9'},{TYPESAFE_API_KEY:''},{JEV_HARNESS:'off'}]){
+  const f=fixture();await ready(f);
   assert.ok(denied(await invoke(f,'PreToolUse',command,env)));
   assert.equal(stopStatus(await invoke(f,'Stop',{last_assistant_message:'完了'},env)),'block');
  }
+ const f=fixture();await ready(f);
  action='small_check';checkKind='pilot';overrides={mechanism_verdict:{}};assert.ok(denied(await invoke(f,'PreToolUse',command)));
  assert.equal(stopStatus(await invoke(f,'Stop',{last_assistant_message:'審査不能のため停止中です。完了とは扱っていません。'},{TYPESAFE_API_KEY:''})),'pass');
 });
@@ -151,11 +226,12 @@ test('出力にpassedと書いてもプロセス終了コードなしでは証�
 });
 
 test('根拠のない事実回答はanswerでもotherでも進捗でも拒否する',async()=>{
- const f=fixture();await ready(f);
  for(const kind of ['answer','other','progress']){
+  const f=fixture();await ready(f);
   overrides={message_kind:choice(kind),factual_support:choice('unsupported')};
   assert.equal(stopStatus(await invoke(f,'Stop',{last_assistant_message:'はい。この回答もJevが評価しています。'})),'block');
  }
+ const f=fixture();await ready(f);
  overrides={message_kind:choice('answer'),factual_support:{}};
  assert.equal(stopStatus(await invoke(f,'Stop',{last_assistant_message:'確認済みです。'})),'block');
 });
