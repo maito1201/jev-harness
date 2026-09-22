@@ -49,6 +49,27 @@ export function fragmentEvidence(items,budget){
  return result;
 }
 
+// Review windows: full records stay in session state; the reviewer receives the
+// most recent records that fit one request, so a long session never becomes an
+// unpassable partitioned review. Verification runs (including failures) go first.
+export const EVIDENCE_WINDOW_BYTES=10000,OUTPUT_CHARS=3000;
+export function clipOutput(text,limit=OUTPUT_CHARS){
+ if(typeof text!=='string'||text.length<=limit)return {output:text,output_truncated:false};
+ const head=Math.floor(limit*.7),tail=limit-head;
+ return {output:text.slice(0,head)+`\n…[${text.length-limit} chars omitted for review; full output retained under output_hash]…\n`+text.slice(-tail),output_truncated:true};
+}
+export function boundEvidence(items,budget=EVIDENCE_WINDOW_BYTES,priority=item=>typeof item?.exit_code==='number'||item?.current===true||item?.stale===true){
+ const unique=uniqueEvidence(items),kept=[];let used=0;
+ for(const pass of [true,false])for(let i=unique.length-1;i>=0;i--){
+  const item=unique[i];if(!!priority(item)!==pass)continue;
+  const clipped=typeof item.output==='string'?{...item,...clipOutput(item.output)}:item;
+  const size=bytes(clipped);if(used+size>budget)continue;
+  kept.push({index:i,item:clipped});used+=size;
+ }
+ kept.sort((a,b)=>a.index-b.index);
+ return {evidence:kept.map(k=>k.item),omitted:unique.length-kept.length,total:unique.length};
+}
+
 const RISK=new Set(['mixed_mutation_and_run','changes_evaluation','claims_completion','remaining_work_while_done','outcome_drift','files_out_of_scope','handwave','cases_incomplete','assumed_instead_of_asking','process_narrative','outcome_paraphrase','claims_verification_passed','needs_outcome_check','needs_plan_review']);
 export function validateAnswers(answers,questions){
  for(const [key,q] of Object.entries(questions)){

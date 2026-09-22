@@ -415,3 +415,39 @@ test('将来だけの計画は実証済みとせず審査し、誤分類され�
  const second=await invoke(f,'Stop',{last_assistant_message:'計画。全ての試験は既に成功しています。'});
  assert.match(second.out.reason,/factual_support/);
 });
+test('読み取りコマンドの副作用分類は参照ファイルの全文を送らず、巨大ファイルでも通る',async()=>{
+ const f=fixture();await ready(f);writeFileSync(join(f.cwd,'big.js'),'x'.repeat(120000));
+ action='read';const before=seen.length;
+ const r=await invoke(f,'PreToolUse',{...command,tool_input:{command:'cat big.js main.js'},tool_use_id:'bigread'});
+ assert.equal(denied(r),false,JSON.stringify(r));
+ const bodies=seen.slice(before);assert.equal(bodies.length,1);
+ assert.equal(bodies[0].state.source,undefined);assert.equal(bodies[0].state.partial_review,undefined);
+});
+test('Post結果の審査が失敗し続けても上限で未審査として保管し、全面ロックにしない',async()=>{
+ const f=fixture();await ready(f);action='small_check';checkKind='pilot';
+ assert.equal(denied(await invoke(f,'PreToolUse',command)),false);
+ reviewRule=body=>body.questions.outcome_observed?{outcome_observed:{type:'choice',choice:'bogus'}}:null;
+ const post=await invoke(f,'PostToolUse',{...command,tool_response:{exit_code:0,output:'huge'.repeat(9000)}});
+ assert.match(post.out.systemMessage,/審査不能/);assert.ok(state(f).unreviewed_result);assert.equal(state(f).unreviewed_attempts,1);
+ const next={...command,tool_use_id:'cmd2'};
+ for(let i=2;i<=3;i++){const r=await invoke(f,'PreToolUse',next);assert.ok(denied(r));assert.match(r.out.hookSpecificOutput.permissionDecisionReason,/審査不能/);assert.equal(state(f).unreviewed_attempts,i);}
+ const r=await invoke(f,'PreToolUse',next);
+ assert.equal(state(f).unreviewed_result,undefined);assert.equal(state(f).unreviewed_attempts,0);
+ assert.doesNotMatch(r.out?.hookSpecificOutput?.permissionDecisionReason || '',/審査不能/);
+ const archived=state(f).evidence_archive.find(e=>e.unreviewed);assert.ok(archived);assert.equal(archived.passed,false);
+ assert.ok(archived.actual_process_result.output.startsWith('huge'));
+ assert.equal(state(f).receipts.some(x=>x.id==='cmd'&&x.passed),false);
+ reviewRule=null;assert.equal(stopStatus(await invoke(f,'Stop',{last_assistant_message:'完了しました'})),'block');
+});
+test('Stopの観測は上限内の窓だけ送り、失敗した実行は残し、全件は状態に保持する',async()=>{
+ const f=fixture();await ready(f);await evidence(f,{exit:1});
+ const saved=state(f);saved.observations=Array.from({length:60},(_,i)=>({operation:{id:'obs'+i,name:'Read',kind:'read',details:'file'+i},output:('o'+i+' ').repeat(400),output_hash:'h'+i}));
+ writeFileSync(join(f.state,'sessions/test.json'),JSON.stringify(saved));
+ overrides={message_kind:choice('progress')};const start=seen.length;
+ await invoke(f,'Stop',{last_assistant_message:'検証は失敗しています。未完了です。'});
+ const reliability=seen.slice(start).find(b=>b.questions.factual_support);
+ assert.ok(reliability.state.recorded_observations.length<60);assert.ok(reliability.state.evidence_window.omitted>0);
+ assert.ok(reliability.state.recorded_observations.some(r=>r.exit_code===1 && r.passed===false));
+ assert.ok(reliability.state.recorded_observations.some(r=>r.operation?.id==='obs59'));
+ assert.equal(reliability.state.partial_review,undefined);assert.equal(state(f).observations.length,60);
+});

@@ -50,3 +50,26 @@ the updated plugin must be loaded in a new thread.
 - Live desktop hook activation could not be inspected: the app-server control
   socket returned Windows error 10050. No live desktop completion is claimed;
   installed-runtime replay is subprocess validation, not a new desktop task.
+
+## Bounded review inputs (2026-09-22, second pass)
+
+Observed in session `57f27e07-ab87-445e-a67c-27dedb1dcdcd`: read-only commands
+that mention several files, PostToolUse results with large output, and Stop
+reviews of a long session all exceeded the 24KB review budget. Every
+partitioned review returned `joint_context_required` (4 of 4), so those paths
+were deterministic dead ends: repeated denials, a session-wide lock through
+`unreviewed_result`, and three Stop blocks per turn.
+
+- Side-effect classification receives the operation only. Referenced file
+  contents are loaded after a read is allowed, for effect gates that need them.
+- Command output sent to a reviewer is clipped to head and tail with its
+  `output_hash`; the full output stays in state.
+- Stop reviews send a bounded window: all verification runs (including failed
+  and stale ones) first, then the newest observations, with an explicit
+  `evidence_window` count. Nothing is deleted from state.
+- A result whose review fails three times is archived as unreviewed evidence
+  (`passed=false`, authorizes nothing) and stops blocking later operations.
+
+Regression tests cover each path with a controlled reviewer. The mock reviewer
+answers `independent` for partitioned reviews, so the live `required` behaviour
+is avoided rather than reproduced.
