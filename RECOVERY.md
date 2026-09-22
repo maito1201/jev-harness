@@ -73,3 +73,15 @@ were deterministic dead ends: repeated denials, a session-wide lock through
 Regression tests cover each path with a controlled reviewer. The mock reviewer
 answers `independent` for partitioned reviews, so the live `required` behaviour
 is avoided rather than reproduced.
+
+### Third pass: conversation and source bounds
+
+Replaying the live state of session `57f27e07-…` after the second pass still
+partitioned the Stop review: the transcript conversation alone was 18KB.
+Editing a 36KB file also partitioned the gate review because the whole file
+was sent as `source`. Now the conversation sent to prompt and Stop reviews is a
+recent window, Stop window sizes are derived from the room the mandatory
+context leaves, and each source file in a gate or evidence review is clipped
+to head and tail with its hash while the operation (patch or command) stays
+complete. Replay of the same state completed in one 13.7KB request and
+returned a semantic verdict instead of `joint_context_required`.

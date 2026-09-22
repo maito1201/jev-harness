@@ -451,3 +451,31 @@ test('Stopの観測は上限内の窓だけ送り、失敗した実行は残し�
  assert.ok(reliability.state.recorded_observations.some(r=>r.operation?.id==='obs59'));
  assert.equal(reliability.state.partial_review,undefined);assert.equal(state(f).observations.length,60);
 });
+test('長い会話履歴でもStopとUserPromptSubmitは分割審査にならず、直近の発言を残す',async()=>{
+ const f=fixture();await ready(f);
+ const path=join(f.root,'long.jsonl');const lines=[{type:'turn_context',payload:{turn_id:'t'}}];
+ for(let i=0;i<80;i++)lines.push({type:'response_item',payload:{type:'message',role:i%2?'assistant':'user',content:[{type:'output_text',text:`発言${i} `+'長い'.repeat(300)}]}});
+ lines.push({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'最新の依頼です'}]}});
+ lines.push({type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'現状は未確認です。'}]}});
+ writeFileSync(path,lines.map(JSON.stringify).join('\n'));
+ overrides={message_kind:choice('answer')};let start=seen.length;
+ assert.equal(stopStatus(await invoke(f,'Stop',{turn_id:'t',transcript_path:path})),'pass');
+ const rel=seen.slice(start).find(b=>b.questions.factual_support);
+ assert.equal(rel.state.partial_review,undefined);assert.ok(rel.state.conversation.length<82);
+ assert.ok(rel.state.conversation.some(m=>m.text==='最新の依頼です'));
+ overrides={prompt_kind:choice('go_ahead')};start=seen.length;
+ await invoke(f,'UserPromptSubmit',{prompt:'続けて',turn_id:'t',transcript_path:path});
+ const pr=seen.slice(start).find(b=>b.questions.prompt_kind);assert.equal(pr.state.partial_review,undefined);
+ assert.ok(pr.state.conversation.length<82);assert.ok(state(f).prompt_inbox.length===0);
+});
+test('巨大なファイルの編集でも工程審査はpatch全文と切り詰めたsourceで一括審査する',async()=>{
+ const f=fixture();await ready(f);
+ writeFileSync(join(f.cwd,'main.js'),'// big\n'+'x'.repeat(60000)+'\nmodule.exports=1;');
+ action='modify';const start=seen.length;
+ const r=await invoke(f,'PreToolUse',{tool_name:'Edit',tool_input:{file_path:'main.js',old_string:'module.exports=1;',new_string:'module.exports=2; // '+'y'.repeat(2000)}});
+ assert.equal(denied(r),false,JSON.stringify(r));
+ const gate=seen.slice(start).find(b=>b.questions.mechanism_verdict);
+ assert.equal(gate.state.partial_review,undefined);
+ assert.ok(gate.state.source.some(s=>s.content_truncated===true && s.sha256));
+ assert.match(gate.state.operation.details,/y{2000}/);
+});

@@ -3,7 +3,7 @@ import {readFileSync,writeFileSync,mkdirSync,appendFileSync,existsSync,renameSyn
 import {join,resolve} from 'node:path';
 import {homedir} from 'node:os';
 import {ask} from './jev.mjs';
-import {boundedReview,ReviewError,uniqueEvidence,REVIEW_BYTES,boundEvidence,clipOutput} from './review-budget.mjs';
+import {boundedReview,ReviewError,uniqueEvidence,REVIEW_BYTES,boundEvidence,boundSources,clipOutput,evidenceRoom,EVIDENCE_WINDOW_BYTES,CONVERSATION_BYTES} from './review-budget.mjs';
 import {MODEL,PROMPT_QUESTIONS,STOP_QUESTIONS} from './questions.mjs';
 import {operation,footprint,sources,commandResult,hash} from './operations.mjs';
 import {diagnosticRead,MAX_STALLED_STOPS} from './recovery.mjs';
@@ -74,7 +74,9 @@ async function onPrompt(){
   // Upgrade recovery uses real user transcript records, never assistant prose.
   // Review them normally, chronologically, without editing the session by hand.
   recoverUserHistory(history,prompt);
-  s.prompt_inbox.push({prompt,conversation:history.conversation,turn_id:input.turn_id || null});
+  // Conversation is context for prompt classification, not evidence. Bound it
+  // so a long thread cannot make every later prompt review unreviewable.
+  s.prompt_inbox.push({prompt,conversation:boundEvidence(history.conversation,CONVERSATION_BYTES,()=>false).evidence,turn_id:input.turn_id || null});
   s.stalled_stops=0;s.recovery_required=false;
   save(); // Durable BEFORE the network call. API failure must not erase the request.
   await drainPrompts();
@@ -180,7 +182,7 @@ async function onPre(){
     ? 'Review the proposed edit as an incremental artifact, not an executed experiment. For criteria/document edits, require an explicit objective, observable acceptance and negative controls; no execution result is required yet. For implementation edits inspect the mechanism in the patch. Never claim a document proves runtime behavior.'
     : evidenceQuestions(workflowOperation,EVIDENCE_QUESTIONS).outcome_observed.instructions;
   questions.mechanism_verdict.instructions+=' For documentation/criteria edits use the document criterion: no executed assertions or completed implementation are prerequisites to writing a valid evaluation design.';
-  const review=await judge({...context(),plan:proposal,operation:op,stage:action,workflow_operation:workflowOperation,stage_check_criterion:stageCriterion,source,source_snapshot:snapshot,small_evidence:boundEvidence(receipts).evidence},questions);
+  const review=await judge({...context(),plan:proposal,operation:op,stage:action,workflow_operation:workflowOperation,stage_check_criterion:stageCriterion,source:boundSources(source),source_snapshot:snapshot,small_evidence:boundEvidence(receipts).evidence},questions);
   const failed=requireScores(review,Object.keys(questions).filter(k=>k!=='mechanism_verdict'));
   if(review.mechanism_verdict?.choice!=='supported')failed.push('mechanism_verdict');
   if(failed.length){
@@ -221,7 +223,7 @@ async function onPost(){
     const observed={completed:result.completed,exit_code:result.exit_code,...clipOutput(receipt.output),output_hash:receipt.output_hash,
       source_unchanged:true,request_unchanged:true};
     receipt.source=sources(op,s.facts.files_written);
-    const answers=await judge({...context(),operation:op,source:receipt.source,actual_process_result:observed,current_source_snapshot:snapshot},evidenceQuestions(pending.workflow_operation,EVIDENCE_QUESTIONS));
+    const answers=await judge({...context(),operation:op,source:boundSources(receipt.source),actual_process_result:observed,current_source_snapshot:snapshot},evidenceQuestions(pending.workflow_operation,EVIDENCE_QUESTIONS));
     receipt.review=answers;receipt.outcome_observed=answers.outcome_observed?.choice==='observed' && answers.evidence_relevant?.choice==='relevant';receipt.passed=receipt.outcome_observed;
   }
   s.receipts=s.receipts.filter(r=>r.id!==op.id);s.receipts.push(receipt);delete s.unreviewed_result;s.unreviewed_attempts=0;save();
@@ -230,7 +232,7 @@ async function onPost(){
     if(pending.workflow_operation==='pilot_check')s.workflow.pilot_command=hash(op.details);
     const next=events[pending.workflow_operation];if(next)advance(next);
   }else if(result.completed){
-    const a=await judge({...context(),operation:op,source:sources(op,s.facts.files_written),actual_process_result:{...result,...clipOutput(result.output),output_hash:receipt.output_hash}},FAILURE_QUESTIONS);
+    const a=await judge({...context(),operation:op,source:boundSources(sources(op,s.facts.files_written)),actual_process_result:{...result,...clipOutput(result.output),output_hash:receipt.output_hash}},FAILURE_QUESTIONS);
     const cause=a.failure_kind?.choice || 'unknown';
     failure(s.workflow,cause,JSON.stringify([snapshot.hash,s.workflow.seal,op.details]));s.receipts=[];s.pending={};save();
     if(s.workflow.phase==='design'){s.plan=null;s.planPassed=false;save();}
@@ -272,9 +274,15 @@ async function onStop(){
   const receipts=s.receipts.filter(r=>r.request_hash===requestHash() && r.source_hash===snapshot.hash && r.completed && r.passed);
   // Full evidence stays in state. The reviewer sees a bounded window: all
   // verification runs (including failures) first, then the newest observations.
+  // Window sizes derive from the room the mandatory context leaves, so a long
+  // request history shrinks the window instead of forcing a partitioned review.
+  const mandatory={...context(),report,current_source_hash:snapshot.hash,current_request_hash:requestHash(),evidence_window:{},evidence_note:'',facts:{files_written:s.facts.files_written,verification_runs:[]}};
+  const room=Math.max(0,evidenceRoom(mandatory,{...RELIABILITY_QUESTIONS,...extra,...STOP_QUESTIONS}));
+  const conversationBudget=Math.min(CONVERSATION_BYTES,Math.floor(room*.35)),evidenceBudget=Math.min(EVIDENCE_WINDOW_BYTES,room-conversationBudget);
+  const conversation=boundEvidence(history.conversation,conversationBudget,()=>false).evidence;
   const window=boundEvidence([...(s.evidence_archive || []),...(s.observations || []).map(o=>({...o,incomplete:!!o.output_hash && hash(o.output)!==o.output_hash})),...history.observations,
-      ...(s.facts.verification_runs || []).map(r=>({...r,incomplete:!!r.output_hash && hash(r.output)!==r.output_hash,current:r.request_hash===requestHash() && r.source_hash===snapshot.hash}))]);
-  const reviewState={...context(),report,conversation:history.conversation,
+      ...(s.facts.verification_runs || []).map(r=>({...r,incomplete:!!r.output_hash && hash(r.output)!==r.output_hash,current:r.request_hash===requestHash() && r.source_hash===snapshot.hash}))],evidenceBudget);
+  const reviewState={...context(),report,conversation,
     current_source_hash:snapshot.hash,current_request_hash:requestHash(),
     recorded_observations:window.evidence,
     evidence_window:{shown:window.evidence.length,omitted:window.omitted,total:window.total,note:'Older observations outside this window are retained in session state but not shown. Their absence is not evidence for or against any claim; a claim needing them is unsupported here.'},
@@ -285,7 +293,7 @@ async function onStop(){
   // Evaluate truthfulness separately from completion. "No experiment yet" must not
   // become "unsupported statement" merely because completion receipts are empty.
   const classification=await judge({...context(),report},{message_kind:STOP_QUESTIONS.message_kind,...extra});
-  const evidenceState={...context(),report,recorded_observations:reviewState.recorded_observations,evidence_window:reviewState.evidence_window,current_source_hash:snapshot.hash,current_request_hash:requestHash(),conversation:history.conversation,evidence_note:reviewState.evidence_note};
+  const evidenceState={...context(),report,recorded_observations:reviewState.recorded_observations,evidence_window:reviewState.evidence_window,current_source_hash:snapshot.hash,current_request_hash:requestHash(),conversation,evidence_note:reviewState.evidence_note};
   let reliability;
   if(classification.message_kind.choice==='plan' && classification.report_basis.choice==='prospective' && classification.claims_completion.noul<.5){
     // A future-only plan cannot establish empirical facts. Audit that claim with

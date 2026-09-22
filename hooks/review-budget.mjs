@@ -52,17 +52,29 @@ export function fragmentEvidence(items,budget){
 // Review windows: full records stay in session state; the reviewer receives the
 // most recent records that fit one request, so a long session never becomes an
 // unpassable partitioned review. Verification runs (including failures) go first.
-export const EVIDENCE_WINDOW_BYTES=10000,OUTPUT_CHARS=3000;
-export function clipOutput(text,limit=OUTPUT_CHARS){
- if(typeof text!=='string'||text.length<=limit)return {output:text,output_truncated:false};
+export const EVIDENCE_WINDOW_BYTES=8000,CONVERSATION_BYTES=5000,OUTPUT_CHARS=3000,SOURCE_CHARS=6000;
+export function clipOutput(text,limit=OUTPUT_CHARS,field='output'){
+ if(typeof text!=='string'||text.length<=limit)return {[field]:text,[field+'_truncated']:false};
  const head=Math.floor(limit*.7),tail=limit-head;
- return {output:text.slice(0,head)+`\n…[${text.length-limit} chars omitted for review; full output retained under output_hash]…\n`+text.slice(-tail),output_truncated:true};
+ return {[field]:text.slice(0,head)+`\n…[${text.length-limit} chars omitted for review; full ${field} retained in session state]…\n`+text.slice(-tail),[field+'_truncated']:true};
+}
+// Source files for a gate review: each file is clipped to head and tail with its
+// hash. The operation itself (patch or command) is never clipped, so an edit is
+// always reviewed in full; the clip only bounds surrounding file context.
+export function boundSources(source,limit=SOURCE_CHARS){
+ return (source || []).map(f=>({...f,...clipOutput(f.content,limit,'content')}));
+}
+// Room left for variable evidence once the mandatory (never clipped) part of a
+// request and its questions are counted. Negative room means the mandatory
+// part alone is too large; callers then fall back to the ordinary budget error.
+export function evidenceRoom(fixedState,questions,budget=REVIEW_BYTES,margin=1500){
+ return budget-bytes({state:fixedState,questions,model:'jev-latest'})-margin;
 }
 export function boundEvidence(items,budget=EVIDENCE_WINDOW_BYTES,priority=item=>typeof item?.exit_code==='number'||item?.current===true||item?.stale===true){
  const unique=uniqueEvidence(items),kept=[];let used=0;
  for(const pass of [true,false])for(let i=unique.length-1;i>=0;i--){
   const item=unique[i];if(!!priority(item)!==pass)continue;
-  const clipped=typeof item.output==='string'?{...item,...clipOutput(item.output)}:item;
+  const clipped=typeof item.output==='string'?{...item,...clipOutput(item.output)}:typeof item.text==='string'?{...item,...clipOutput(item.text,OUTPUT_CHARS,'text')}:item;
   const size=bytes(clipped);if(used+size>budget)continue;
   kept.push({index:i,item:clipped});used+=size;
  }
